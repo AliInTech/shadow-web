@@ -1,0 +1,78 @@
+/* OGGY STYLE RESET */
+* { box-sizing: border-box; font-family: 'Comic Sans MS', cursive, sans-serif; }
+
+:root {
+  --oggy-blue: #5da5ff;
+  --house-bg: #fff5ba;       /* Kitchen wall color */
+  --bubble-own: #ff9b9b;     /* Joey's color vibe */
+  --bubble-peer: #a2f5a2;    /* Cockroach vibe */
+}
+
+body {
+  background: var(--house-bg);
+  height: 100dvh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 0;
+}
+
+.chat-box {
+  width: 500px;
+  height: 80dvh;
+  background: #ffffff;
+  border: 6px solid #333;
+  border-radius: 40px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 15px 15px 0px rgba(0,0,0,0.2);
+}
+
+.room-header {
+  padding: 20px;
+  background: var(--oggy-blue);
+  color: white;
+  text-align: center;
+  font-size: 24px;
+  font-weight: bold;
+  border-bottom: 4px solid #333;
+}
+
+.chat-window {
+  flex: 1;
+  padding: 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.chat-bubble {
+  max-width: 80%;
+  padding: 15px;
+  border-radius: 20px;
+  border: 3px solid #333;
+  position: relative;
+  font-size: 18px;
+  animation: bounceIn 0.5s ease;
+}
+
+.chat-bubble.own { align-self: flex-end; background: var(--bubble-own); }
+.chat-bubble.peer { align-self: flex-start; background: var(--bubble-peer); }
+
+.chat-controls-wrapper { padding: 20px; background: #eee; border-top: 4px solid #333; }
+.chat-controls { display: flex; gap: 10px; }
+.chat-controls input {
+  flex: 1;
+  padding: 15px;
+  border-radius: 20px;
+  border: 3px solid #333;
+  font-size: 16px;
+}
+
+@keyframes bounceIn {
+  0% { transform: scale(0.5); opacity: 0; }
+  60% { transform: scale(1.1); }
+  100% { transform: scale(1); opacity: 1; }
+}
