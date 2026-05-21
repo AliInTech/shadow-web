@@ -20,7 +20,13 @@ app.use(
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        connectSrc: ["'self'", 'ws:', 'wss:', process.env.CLIENT_URL || '*'],
+        connectSrc: [
+          "'self'", 
+          'ws:', 
+          'wss:', 
+          process.env.CLIENT_URL || '*', 
+          'https://shadow-web-chat-client-new.onrender.com'
+        ],
         scriptSrc: ["'self'", "'unsafe-inline'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         fontSrc: ["'self'"],
@@ -33,8 +39,10 @@ app.use(
 // ===============================
 // CORS (PRODUCTION READY)
 // ===============================
-// Ab sirf process.env.CLIENT_URL allow hoga
-const allowedOrigins = process.env.CLIENT_URL ? [process.env.CLIENT_URL] : [];
+const allowedOrigins = [
+    process.env.CLIENT_URL, 
+    "https://shadow-web-chat-client-new.onrender.com"
+].filter(Boolean);
 
 app.use(
   cors({
@@ -124,5 +132,3 @@ io.on('connection', (socket) => {
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log('🚀 SHADOW WEB SERVER RUNNING ON PORT:', PORT);
 });
-
-
