@@ -3,7 +3,9 @@ import { io } from 'socket.io-client';
 import { useWebRTC } from '../hooks/useWebRTC';
 import { encryptPayload, decryptPayload } from '../utils/crypto';
 
-const socket = io('http://localhost:5000');
+const socket = io('import.meta.env.https://shadow-web-backend.onrender.com',{
+    transports:["websocket"]
+});
 
 function Chat() {
   const [roomId, setRoomId] = useState('');
