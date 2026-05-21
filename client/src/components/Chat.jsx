@@ -1,29 +1,48 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
-import { useWebRTC } from '../hooks/useWebRTC';
 
-// Global Socket Instance
-const socket = io('https://shadow-web-server-chat.onrender.com', {
-  transports: ['websocket'],
-  secure: true
+// URL ko exact format mein rakhein (no slash at end)
+const SOCKET_URL = 'https://shadow-web-server-chat.onrender.com';
+
+const socket = io(SOCKET_URL, {
+  transports: ['websocket', 'polling'],
+  reconnection: true,
+  reconnectionAttempts: 5,
+  reconnectionDelay: 1000,
 });
 
 function Chat() {
+  const [isConnected, setIsConnected] = useState(false);
   const [activeRoom, setActiveRoom] = useState(null);
   const [roomId, setRoomId] = useState('');
   const [message, setMessage] = useState('');
-  const [chatLog, setChatLog] = useState([]);
-  
-  const { p2pStatus } = useWebRTC(socket, activeRoom);
+  const [messages, setMessages] = useState([]);
 
   useEffect(() => {
-    socket.on('receive-message', (data) => setChatLog((prev) => [...prev, data]));
-    return () => socket.off('receive-message');
+    socket.on('connect', () => {
+      console.log('Connected to Server');
+      setIsConnected(true);
+    });
+
+    socket.on('disconnect', () => {
+      console.log('Disconnected from Server');
+      setIsConnected(false);
+    });
+
+    socket.on('receive-message', (data) => {
+      setMessages((prev) => [...prev, data]);
+    });
+
+    return () => {
+      socket.off('connect');
+      socket.off('disconnect');
+      socket.off('receive-message');
+    };
   }, []);
 
   const handleJoin = (e) => {
     e.preventDefault();
-    if (roomId) {
+    if (roomId.trim()) {
       socket.emit('join-room', roomId);
       setActiveRoom(roomId);
     }
@@ -32,28 +51,43 @@ function Chat() {
   const handleSend = (e) => {
     e.preventDefault();
     if (message.trim()) {
-      const msgData = { room: activeRoom, text: message, sender: "You" };
-      socket.emit('send-message', msgData);
-      setChatLog((prev) => [...prev, msgData]);
-      setMessage(''); // Ab ye kaam karega
+      const payload = { room: activeRoom, text: message, sender: "You" };
+      socket.emit('send-message', payload);
+      setMessages((prev) => [...prev, payload]);
+      setMessage('');
     }
   };
 
   return (
-    <div className="chat-container">
+    <div style={{ padding: '20px' }}>
+      <h2>Shadow Web Mesh</h2>
+      <div style={{ color: isConnected ? 'green' : 'red', fontWeight: 'bold' }}>
+        Status: {isConnected ? "🟢 Connected" : "🔴 Disconnected"}
+      </div>
+
       {!activeRoom ? (
-        <form onSubmit={handleJoin}>
-          <input value={roomId} onChange={(e) => setRoomId(e.target.value)} placeholder="Enter Room ID" />
-          <button type="submit">Establish Link</button>
+        <form onSubmit={handleJoin} style={{ marginTop: '20px' }}>
+          <input 
+            value={roomId} 
+            onChange={(e) => setRoomId(e.target.value)} 
+            placeholder="Room ID" 
+          />
+          <button type="submit">Join Room</button>
         </form>
       ) : (
-        <div className="chat-ui">
-          <p>Status: {p2pStatus}</p>
-          <div className="messages">
-            {chatLog.map((m, i) => <p key={i}>{m.text}</p>)}
+        <div style={{ marginTop: '20px' }}>
+          <h4>Room: {activeRoom}</h4>
+          <div style={{ height: '300px', border: '1px solid #ccc', overflowY: 'scroll', padding: '10px' }}>
+            {messages.map((m, i) => (
+              <p key={i}><strong>{m.sender}:</strong> {m.text}</p>
+            ))}
           </div>
-          <form onSubmit={handleSend}>
-            <input value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Type here..." />
+          <form onSubmit={handleSend} style={{ marginTop: '10px' }}>
+            <input 
+              value={message} 
+              onChange={(e) => setMessage(e.target.value)} 
+              placeholder="Type message..." 
+            />
             <button type="submit">Send</button>
           </form>
         </div>
@@ -63,4 +97,3 @@ function Chat() {
 }
 
 export default Chat;
-
