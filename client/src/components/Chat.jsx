@@ -3,8 +3,10 @@ import { io } from 'socket.io-client';
 import { useWebRTC } from '../hooks/useWebRTC';
 import { encryptPayload, decryptPayload } from '../utils/crypto';
 
-const socket = io('http://localhost:5000');
-
+const socket = io('https://shadow-web-1-ri55.onrender.com', {
+  transports: ['websocket'], // Production ke liye best practice
+  secure: true
+});
 function Chat() {
   const [roomId, setRoomId] = useState('');
   const [activeRoom, setActiveRoom] = useState(null);
