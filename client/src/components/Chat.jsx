@@ -1,36 +1,29 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { io } from 'socket.io-client';
+import { useWebRTC } from '../hooks/useWebRTC';
 
-// WebSocket connection setup
+// Global Socket Instance
 const socket = io('https://shadow-web-server-chat.onrender.com', {
   transports: ['websocket'],
   secure: true
 });
 
 function Chat() {
-  const [isConnected, setIsConnected] = useState(false);
   const [activeRoom, setActiveRoom] = useState(null);
   const [roomId, setRoomId] = useState('');
   const [message, setMessage] = useState('');
-  const [messages, setMessages] = useState([]);
+  const [chatLog, setChatLog] = useState([]);
+  
+  const { p2pStatus } = useWebRTC(socket, activeRoom);
 
   useEffect(() => {
-    socket.on('connect', () => setIsConnected(true));
-    socket.on('disconnect', () => setIsConnected(false));
-    socket.on('receive-message', (data) => {
-      setMessages((prev) => [...prev, data]);
-    });
-
-    return () => {
-      socket.off('connect');
-      socket.off('disconnect');
-      socket.off('receive-message');
-    };
+    socket.on('receive-message', (data) => setChatLog((prev) => [...prev, data]));
+    return () => socket.off('receive-message');
   }, []);
 
   const handleJoin = (e) => {
     e.preventDefault();
-    if (roomId.trim()) {
+    if (roomId) {
       socket.emit('join-room', roomId);
       setActiveRoom(roomId);
     }
@@ -38,30 +31,29 @@ function Chat() {
 
   const handleSend = (e) => {
     e.preventDefault();
-    if (message.trim() && isConnected) {
-      const payload = { room: activeRoom, text: message, sender: "You" };
-      socket.emit('send-message', payload);
-      setMessages((prev) => [...prev, payload]);
-      setMessage(''); // Reset input
+    if (message.trim()) {
+      const msgData = { room: activeRoom, text: message, sender: "You" };
+      socket.emit('send-message', msgData);
+      setChatLog((prev) => [...prev, msgData]);
+      setMessage(''); // Ab ye kaam karega
     }
   };
 
   return (
     <div className="chat-container">
-      <h3>Status: {isConnected ? "🟢 Online" : "🔴 Disconnected"}</h3>
-
       {!activeRoom ? (
         <form onSubmit={handleJoin}>
-          <input value={roomId} onChange={(e) => setRoomId(e.target.value)} placeholder="Room ID" />
-          <button type="submit">Join</button>
+          <input value={roomId} onChange={(e) => setRoomId(e.target.value)} placeholder="Enter Room ID" />
+          <button type="submit">Establish Link</button>
         </form>
       ) : (
-        <div>
-          <div className="chat-box" style={{height:'300px', border:'1px solid #ccc', overflowY:'scroll'}}>
-            {messages.map((m, i) => <p key={i}><strong>{m.sender}:</strong> {m.text}</p>)}
+        <div className="chat-ui">
+          <p>Status: {p2pStatus}</p>
+          <div className="messages">
+            {chatLog.map((m, i) => <p key={i}>{m.text}</p>)}
           </div>
           <form onSubmit={handleSend}>
-            <input value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Message..." />
+            <input value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Type here..." />
             <button type="submit">Send</button>
           </form>
         </div>
@@ -69,5 +61,6 @@ function Chat() {
     </div>
   );
 }
+
 export default Chat;
 
