@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 
 const ICE_SERVERS = {
   iceServers: [
-    { urls: 'stun:stun.l.google.com:19002' },
-    { urls: 'stun:stun1.l.google.com:19002' }
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' }
   ]
 };
 
@@ -18,9 +18,8 @@ export function useWebRTC(socket, activeRoom) {
   const [isMuted, setIsMuted] = useState(false);
   const [isPeerMuted, setIsPeerMuted] = useState(false);
   const [localVolume, setLocalVolume] = useState(0);
-  
-  // --- PHASE 10 NETWORK TELEMETRY STATES ---
-  const [latency, setLatency] = useState(null); // Ping tracking in ms
+
+  const [latency, setLatency] = useState(null);
   const [isReconnecting, setIsReconnecting] = useState(false);
 
   useEffect(() => {
@@ -31,10 +30,9 @@ export function useWebRTC(socket, activeRoom) {
       return;
     }
 
-    // High-frequency automated health checker
     const startNetworkTelemetryPolling = (pc) => {
       if (statsIntervalRef.current) clearInterval(statsIntervalRef.current);
-      
+
       statsIntervalRef.current = setInterval(async () => {
         if (!pc || pc.connectionState !== 'connected') {
           setLatency(null);
@@ -44,54 +42,47 @@ export function useWebRTC(socket, activeRoom) {
         try {
           const stats = await pc.getStats();
           stats.forEach((report) => {
-            // Target candidate-pair statistics to locate active transport latency
             if (report.type === 'candidate-pair' && report.state === 'succeeded') {
               if (report.currentRoundTripTime !== undefined) {
-                // Convert fractional seconds into accurate millisecond metrics
                 setLatency(Math.round(report.currentRoundTripTime * 1000));
               }
             }
           });
         } catch (err) {
-          console.debug('Telemetry polling skipped metrics frame.', err);
+          console.debug('Telemetry skipped', err);
         }
       }, 2000);
     };
 
     const triggerIceRenegotiation = async () => {
       if (isReconnecting || !peerConnectionRef.current) return;
-      
-      console.warn('⚠️ Network anomaly caught. Triggering clean ICE renegotiation loop...');
+
       setIsReconnecting(true);
       setP2pStatus('Reconnecting');
 
       try {
         const pc = peerConnectionRef.current;
-        // Generate an ICE restart offer payload to establish clean peer routes
         const offer = await pc.createOffer({ iceRestart: true });
         await pc.setLocalDescription(offer);
         socket.emit('webrtc-offer', { room: activeRoom, offer });
       } catch (err) {
-        console.error('❌ ICE Renegotiation route failure:', err);
+        console.error('ICE restart failed:', err);
       }
     };
 
     const initializePeer = async (targetPeerId = null) => {
       if (peerConnectionRef.current) return peerConnectionRef.current;
 
-      console.log('🏗️ Initializing Adaptive WebRTC Mesh Core...');
       const pc = new RTCPeerConnection(ICE_SERVERS);
 
       pc.onconnectionstatechange = () => {
-        const currentState = pc.connectionState;
-        setP2pStatus(currentState);
-        
-        if (currentState === 'connected') {
+        const state = pc.connectionState;
+        setP2pStatus(state);
+
+        if (state === 'connected') {
           setIsReconnecting(false);
           startNetworkTelemetryPolling(pc);
-        } else if (currentState === 'disconnected') {
-          triggerIceRenegotiation();
-        } else if (currentState === 'failed') {
+        } else if (state === 'disconnected' || state === 'failed') {
           triggerIceRenegotiation();
         }
       };
@@ -107,23 +98,18 @@ export function useWebRTC(socket, activeRoom) {
       };
 
       pc.ontrack = (event) => {
-        if (event.streams && event.streams[0]) {
+        if (event.streams?.[0]) {
           remoteAudioRef.current.srcObject = event.streams[0];
-          remoteAudioRef.current.play().catch((err) => 
-            console.error('❌ Remote audio playback initialization error:', err)
-          );
+          remoteAudioRef.current.play().catch(() => {});
         }
       };
 
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         localStreamRef.current = stream;
-        
-        stream.getTracks().forEach((track) => {
-          pc.addTrack(track, stream);
-        });
 
-        // Web Audio API Analysis Sub-Engine
+        stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
         const source = audioContext.createMediaStreamSource(stream);
         const analyser = audioContext.createAnalyser();
@@ -133,86 +119,79 @@ export function useWebRTC(socket, activeRoom) {
         const bufferLength = analyser.frequencyBinCount;
         const dataArray = new Uint8Array(bufferLength);
 
+        const audioTrack = stream.getAudioTracks()[0];
+
         const streamAudioLevels = () => {
-          if (!localStreamRef.current || audioTrack.enabled === false) {
+          if (!localStreamRef.current || !audioTrack?.enabled) {
             setLocalVolume(0);
             audioAnimationRef.current = requestAnimationFrame(streamAudioLevels);
             return;
           }
-          
+
           analyser.getByteFrequencyData(dataArray);
+
           let sum = 0;
           for (let i = 0; i < bufferLength; i++) {
             sum += dataArray[i];
           }
-          const averageVolume = sum / bufferLength;
-          setLocalVolume(Math.min(Math.round((averageVolume / 128) * 100), 100));
+
+          const avg = sum / bufferLength;
+          setLocalVolume(Math.min(Math.round((avg / 128) * 100), 100));
+
           audioAnimationRef.current = requestAnimationFrame(streamAudioLevels);
         };
 
-        const audioTrack = stream.getAudioTracks()[0];
         streamAudioLevels();
 
       } catch (err) {
-        console.error('❌ Hardware Microphone Lock Blocked:', err);
+        console.error('Mic access error:', err);
       }
 
       peerConnectionRef.current = pc;
       return pc;
     };
 
-    // WebSocket Handshake Signals
     socket.on('system-message', async (data) => {
       if (data?.text?.includes('joined')) {
         const pc = await initializePeer();
-        try {
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          socket.emit('webrtc-offer', { room: activeRoom, offer });
-        } catch (err) {
-          console.error('❌ Offer creation crash:', err);
-        }
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit('webrtc-offer', { room: activeRoom, offer });
       }
     });
 
     socket.on('webrtc-offer', async (data) => {
-      const { offer, sender } = data;
-      const pc = await initializePeer(sender);
-      try {
-        await pc.setRemoteDescription(new RTCSessionDescription(offer));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        socket.emit('webrtc-answer', { target: sender, answer });
-      } catch (err) {
-        console.error('❌ Answer handling exception:', err);
-      }
+      const pc = await initializePeer(data.sender);
+
+      await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      socket.emit('webrtc-answer', {
+        target: data.sender,
+        answer
+      });
     });
 
     socket.on('webrtc-answer', async (data) => {
-      const { answer } = data;
       if (peerConnectionRef.current) {
-        try {
-          await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(answer));
-        } catch (err) {
-          console.error('❌ Setting Remote Description Failed:', err);
-        }
+        await peerConnectionRef.current.setRemoteDescription(
+          new RTCSessionDescription(data.answer)
+        );
       }
     });
 
     socket.on('webrtc-ice-candidate', async (data) => {
-      const { candidate } = data;
-      if (peerConnectionRef.current && candidate) {
+      if (peerConnectionRef.current && data.candidate) {
         try {
-          await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-        } catch (e) {
-          console.debug('ICE parsing edge case handled.', e);
-        }
+          await peerConnectionRef.current.addIceCandidate(
+            new RTCIceCandidate(data.candidate)
+          );
+        } catch {}
       }
     });
 
-    socket.on('peer-mute-status', (status) => {
-      setIsPeerMuted(status);
-    });
+    socket.on('peer-mute-status', setIsPeerMuted);
 
     return () => {
       socket.off('system-message');
@@ -220,30 +199,36 @@ export function useWebRTC(socket, activeRoom) {
       socket.off('webrtc-answer');
       socket.off('webrtc-ice-candidate');
       socket.off('peer-mute-status');
-      
-      if (statsIntervalRef.current) clearInterval(statsIntervalRef.current);
-      if (audioAnimationRef.current) cancelAnimationFrame(audioAnimationRef.current);
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach((track) => track.stop());
-      }
-      if (peerConnectionRef.current) {
-        peerConnectionRef.current.close();
-        peerConnectionRef.current = null;
-      }
+
+      clearInterval(statsIntervalRef.current);
+      cancelAnimationFrame(audioAnimationRef.current);
+
+      localStreamRef.current?.getTracks().forEach(t => t.stop());
+      peerConnectionRef.current?.close();
+      peerConnectionRef.current = null;
     };
-  }, [socket, activeRoom, isReconnecting]);
+  }, [socket, activeRoom]);
 
   const toggleMute = () => {
-    if (localStreamRef.current) {
-      const audioTrack = localStreamRef.current.getAudioTracks()[0];
-      if (audioTrack) {
-        const nextMuteState = !audioTrack.enabled;
-        audioTrack.enabled = nextMuteState;
-        setIsMuted(!nextMuteState);
-        socket.emit('mute-status-change', { room: activeRoom, isMuted: !nextMuteState });
-      }
+    const track = localStreamRef.current?.getAudioTracks()[0];
+    if (track) {
+      track.enabled = !track.enabled;
+      setIsMuted(!track.enabled);
+
+      socket.emit('mute-status-change', {
+        room: activeRoom,
+        isMuted: !track.enabled
+      });
     }
   };
 
-  return { p2pStatus, isMuted, isPeerMuted, toggleMute, localVolume, latency, isReconnecting };
+  return {
+    p2pStatus,
+    isMuted,
+    isPeerMuted,
+    toggleMute,
+    localVolume,
+    latency,
+    isReconnecting
+  };
 }
