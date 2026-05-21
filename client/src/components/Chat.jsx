@@ -1,83 +1,108 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
-import { useWebRTC } from '../hooks/useWebRTC';
-import { encryptPayload, decryptPayload } from '../utils/crypto';
 
+// WebSocket connection with stability options
 const socket = io('https://shadow-web-server-chat.onrender.com', {
   transports: ['websocket'],
-  secure: true
+  secure: true,
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 1000,
 });
 
 function Chat() {
-  const [roomId, setRoomId] = useState('');
+  const [isConnected, setIsConnected] = useState(socket.connected);
   const [activeRoom, setActiveRoom] = useState(null);
+  const [roomId, setRoomId] = useState('');
   const [message, setMessage] = useState('');
   const [chatLog, setChatLog] = useState([]);
-  
-  // Custom Hook for WebRTC
-  const { p2pStatus, isMuted, isPeerMuted, toggleMute, localVolume, latency, isReconnecting } = useWebRTC(socket, activeRoom);
-  
-  const chatWindowRef = useRef(null);
-  const socketId5 = socket.id ? socket.id.substring(0, 5) : '...';
+  const chatEndRef = useRef(null);
 
   useEffect(() => {
-    socket.on('receive-message', (data) => setChatLog((prev) => [...prev, data]));
-    return () => socket.off('receive-message');
+    const handleConnect = () => setIsConnected(true);
+    const handleDisconnect = () => setIsConnected(false);
+    const handleMessage = (data) => setChatLog((prev) => [...prev, data]);
+
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+    socket.on('receive-message', handleMessage);
+
+    return () => {
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+      socket.off('receive-message', handleMessage);
+    };
   }, []);
+
+  // Auto-scroll when messages update
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatLog]);
 
   const handleJoinRoom = (e) => {
     e.preventDefault();
-    if (!roomId.trim()) return;
-    socket.emit('join-room', roomId);
-    setActiveRoom(roomId);
+    if (roomId.trim()) {
+      socket.emit('join-room', roomId);
+      setActiveRoom(roomId);
+    }
   };
 
-  const handleSendMessage = async (e) => {
+  const handleSendMessage = (e) => {
     e.preventDefault();
-    if (!message.trim()) return;
-    const msgData = { 
+    if (message.trim()) {
+      const msgData = { 
         room: activeRoom, 
         text: message, 
-        sender: socketId5,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
-    };
-    socket.emit('send-message', msgData);
-    setChatLog((prev) => [...prev, msgData]);
-    setMessage('');
+        sender: "You",
+        timestamp: new Date().toLocaleTimeString()
+      };
+      socket.emit('send-message', msgData);
+      setChatLog((prev) => [...prev, msgData]);
+      setMessage('');
+    }
   };
 
-  if (!activeRoom) {
-    return (
-      <div className="placeholder-card lobby-card">
-        <h3>Bridge Configuration</h3>
-        <form onSubmit={handleJoinRoom} className="lobby-form">
-          <input value={roomId} onChange={(e) => setRoomId(e.target.value)} placeholder="Enter Room Code" />
-          <button type="submit">Establish Link</button>
-        </form>
-      </div>
-    );
-  }
-
   return (
-    <div className="chat-box">
-      <div className="room-header">
-        <span>Channel: <strong>{activeRoom}</strong></span>
-        <span className={`p2p-badge ${p2pStatus?.toLowerCase()}`}>{p2pStatus}</span>
-        <button onClick={() => setActiveRoom(null)}>Disconnect</button>
+    <div className="chat-container">
+      <div className="status-bar">
+        Status: {isConnected ? <span style={{color: 'green'}}>Connected</span> : <span style={{color: 'red'}}>Disconnected</span>}
       </div>
 
-      <div className="chat-window" ref={chatWindowRef}>
-        {chatLog.map((msg, i) => (
-          <div key={i} className="chat-bubble">
-            <small>[{msg.sender}]</small> <p>{msg.text}</p>
+      {!activeRoom ? (
+        <div className="lobby">
+          <h2>Shadow Web Lobby</h2>
+          <form onSubmit={handleJoinRoom}>
+            <input 
+              value={roomId} 
+              onChange={(e) => setRoomId(e.target.value)} 
+              placeholder="Enter Room Code" 
+            />
+            <button type="submit">Establish Link</button>
+          </form>
+        </div>
+      ) : (
+        <div className="chat-window">
+          <h3>Channel: {activeRoom}</h3>
+          <div className="message-list">
+            {chatLog.map((msg, i) => (
+              <div key={i} className="message">
+                <strong>{msg.sender}:</strong> {msg.text}
+              </div>
+            ))}
+            <div ref={chatEndRef} />
           </div>
-        ))}
-      </div>
-
-      <form onSubmit={handleSendMessage} className="chat-controls">
-        <input value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Send message..." />
-        <button type="submit">Send</button>
-      </form>
+          
+          <form onSubmit={handleSendMessage}>
+            <input 
+              value={message} 
+              onChange={(e) => setMessage.target.value} 
+              placeholder="Type message..." 
+            />
+            <button type="submit">Send</button>
+          </form>
+          <button onClick={() => setActiveRoom(null)}>Leave Room</button>
+        </div>
+      )}
     </div>
   );
 }
