@@ -3,7 +3,7 @@ import { io } from 'socket.io-client';
 import { useWebRTC } from '../hooks/useWebRTC';
 import { encryptPayload, decryptPayload } from '../utils/crypto';
 
-const socket = io('https://shadow-web-server-chat.onrender.com', {
+const socket = io('https://shadow-web-server-new.onrender.com', {
   transports: ['websocket'], // Production ke liye best practice
   secure: true
 });
