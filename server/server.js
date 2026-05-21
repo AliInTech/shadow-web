@@ -11,6 +11,8 @@ import { Server } from 'socket.io';
 import mongoose from 'mongoose';
 
 const app = express();
+
+// ✅ FIX 1: Production-safe PORT
 const PORT = process.env.PORT || 5000;
 
 // =========================================
@@ -21,7 +23,13 @@ app.use(
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        connectSrc: ["'self'", 'ws:', 'wss:', 'http://192.168.1.13:*'],
+        connectSrc: [
+          "'self'",
+          'ws:',
+          'wss:',
+          'http://192.168.1.13:*',
+          process.env.CLIENT_URL || "*"
+        ],
         scriptSrc: ["'self'", "'unsafe-inline'"],
         styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
         fontSrc: ["'self'", 'https://fonts.gstatic.com'],
@@ -36,7 +44,7 @@ app.use(
 // =========================================
 app.use(
   cors({
-    origin: '*',
+    origin: process.env.CLIENT_URL || '*',
     methods: ['GET', 'POST'],
     credentials: true
   })
@@ -47,64 +55,50 @@ app.use(express.json());
 // =========================================
 // MONGODB DATABASE CONNECTION
 // =========================================
-mongoose
-  .connect(process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/shadow_mesh')
-  .then(() => {
+(async () => {
+  try {
+    await mongoose.connect(
+      process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/shadow_mesh'
+    );
     console.log('💾 MongoDB Connected Successfully');
-  })
-  .catch((err) => {
+  } catch (err) {
     console.error('❌ MongoDB Connection Error:', err);
-  });
+  }
+})();
 
 // =========================================
 // ENCRYPTED MESSAGE SCHEMA
 // =========================================
 const messageSchema = new mongoose.Schema({
-  room: {
-    type: String,
-    required: true,
-    index: true
-  },
+  room: { type: String, required: true, index: true },
   cryptoPayload: {
     cipherText: { type: String, required: true },
     iv: { type: String, required: true }
   },
-  isAudio: {
-    type: Boolean,
-    default: false
-  },
-  sender: {
-    type: String,
-    required: true
-  },
-  timestamp: {
-    type: String,
-    required: true
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  }
+  isAudio: { type: Boolean, default: false },
+  sender: { type: String, required: true },
+  timestamp: { type: String, required: true },
+  createdAt: { type: Date, default: Date.now }
 });
 
 const Message = mongoose.model('Message', messageSchema);
 
 // =========================================
-// HEALTH INTERFACE (API GATEWAY)
+// HEALTH INTERFACE
 // =========================================
 app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'online' });
 });
 
 // =========================================
-// CORE INFRASTRUCTURE SERVER OBJECTS
+// SERVER + SOCKET INIT
 // =========================================
 const httpServer = createServer(app);
+
 const io = new Server(httpServer, {
   cors: {
-    origin: '*',
-    methods: ['GET', 'POST'],
-    credentials: true
+    origin: process.env.CLIENT_URL || '*',
+    methods: ['GET', 'POST']
   }
 });
 
@@ -112,22 +106,17 @@ const io = new Server(httpServer, {
 // SOCKET CONFIGURATION PIPELINE
 // =========================================
 io.on('connection', (socket) => {
-  console.log(`📡 Node linked to matrix: ${socket.id}`);
+  console.log(`📡 Node linked: ${socket.id}`);
 
-  // 1. JOIN CHANNEL ROUTE
+  // JOIN ROOM
   socket.on('join-room', async (roomId) => {
     try {
-      const currentRooms = Array.from(socket.rooms);
-      currentRooms.forEach((room) => {
-        if (room !== socket.id) {
-          socket.leave(room);
-        }
+      Array.from(socket.rooms).forEach((room) => {
+        if (room !== socket.id) socket.leave(room);
       });
 
       socket.join(roomId);
-      console.log(`🔑 Node [${socket.id.substring(0, 5)}] routed to channel: ${roomId}`);
 
-      // MongoDB se encrypted data chunks nikalna
       const historicalLogs = await Message.find({ room: roomId })
         .sort({ createdAt: 1 })
         .limit(50);
@@ -143,132 +132,99 @@ io.on('connection', (socket) => {
       );
 
       socket.to(roomId).emit('system-message', {
-        text: `🔄 Node [${socket.id.substring(0, 5)}] joined. Calibrating secure sync grids...`
+        text: `🔄 Node ${socket.id.slice(0, 5)} joined`
       });
     } catch (err) {
-      console.error('❌ Failed to join room:', err);
+      console.error(err);
     }
   });
 
-  // 2. ENCRYPTED MESSAGE ROUTING & DB WRITE
+  // SEND MESSAGE
   socket.on('send-message', async (data) => {
     try {
-      const { room, cryptoPayload, isAudio, sender, timestamp } = data;
-      console.log(`📩 Encrypted payload received for room [${room}]`);
+      const msg = await Message.create(data);
 
-      const newMessage = new Message({
-        room,
-        cryptoPayload,
-        isAudio,
-        sender,
-        timestamp
-      });
-
-      await newMessage.save();
-
-      io.to(room).emit('receive-message', {
-        cryptoPayload,
-        isAudio,
-        sender,
-        timestamp
+      io.to(data.room).emit('receive-message', {
+        cryptoPayload: msg.cryptoPayload,
+        isAudio: msg.isAudio,
+        sender: msg.sender,
+        timestamp: msg.timestamp
       });
     } catch (err) {
-      console.error('❌ Archival write fault:', err);
+      console.error(err);
     }
   });
 
-  // 3. PURGE ROOM SEQUENCE EVENT (DB & MEMORY CRASH WIPE)
+  // PURGE ROOM
   socket.on('purge-room', async (roomId) => {
     try {
-      // MongoDB storage clusters se data permanently delete karna
-      const deletionResult = await Message.deleteMany({ room: roomId });
-      console.log(`🧹 DB wiped clean for room: ${roomId}. Dropped rows: ${deletionResult.deletedCount}`);
-      
-      // UI clear signals dispatch karna
+      await Message.deleteMany({ room: roomId });
+
       io.to(roomId).emit('room-purged');
-      
-      // Network overlay alert drop karna
       io.to(roomId).emit('system-message', {
-        text: `⚠️ CRITICAL NOTICE: Room logs have been REMOTELY PURGED via secure master key sequence.`
+        text: '⚠️ Room purged successfully'
       });
     } catch (err) {
-      console.error('❌ Database Purge Operation Failed:', err);
+      console.error(err);
     }
   });
 
-  // 4. WEBRTC SIGNALING RELAYS
+  // WEBRTC
   socket.on('webrtc-offer', (data) => {
-    try {
-      const { room, offer } = data;
-      console.log(`📦 Relaying WebRTC Offer from [${socket.id.substring(0, 5)}]`);
-      socket.to(room).emit('webrtc-offer', {
-        offer,
-        sender: socket.id
-      });
-    } catch (err) {
-      console.error('❌ WebRTC Offer Relay Error:', err);
-    }
+    socket.to(data.room).emit('webrtc-offer', {
+      offer: data.offer,
+      sender: socket.id
+    });
   });
 
   socket.on('webrtc-answer', (data) => {
-    try {
-      const { target, answer } = data;
-      console.log(`📦 Relaying WebRTC Answer to peer [${target.substring(0, 5)}]`);
-      io.to(target).emit('webrtc-answer', {
-        answer,
-        sender: socket.id
-      });
-    } catch (err) {
-      console.error('❌ WebRTC Answer Relay Error:', err);
-    }
+    io.to(data.target).emit('webrtc-answer', {
+      answer: data.answer,
+      sender: socket.id
+    });
   });
 
   socket.on('webrtc-ice-candidate', (data) => {
-    try {
-      const { room, target, candidate } = data;
-      if (target) {
-        io.to(target).emit('webrtc-ice-candidate', {
-          candidate,
-          sender: socket.id
-        });
-        console.log(`🧊 Relaying ICE Candidate directly to peer [${target.substring(0, 5)}]`);
-        return;
-      }
-      socket.to(room).emit('webrtc-ice-candidate', {
-        candidate,
+    if (data.target) {
+      io.to(data.target).emit('webrtc-ice-candidate', {
+        candidate: data.candidate,
         sender: socket.id
       });
-      console.log(`🧊 Broadcasting ICE Candidate across room [${room}]`);
-    } catch (err) {
-      console.error('❌ ICE Relay Error:', err);
+    } else {
+      socket.to(data.room).emit('webrtc-ice-candidate', {
+        candidate: data.candidate,
+        sender: socket.id
+      });
     }
   });
 
-  // 5. MEDIA OVERLAY AUDIO STATUS RELAY
-  socket.on('mute-status-change', (data) => {
-    try {
-      const { room, isMuted } = data;
-      socket.to(room).emit('peer-mute-status', isMuted);
-    } catch (err) {
-      console.error('❌ Mute Relay Error:', err);
-    }
-  });
-
-  // 6. PEER DISCONNECT WATCHDOG
   socket.on('disconnect', () => {
-    console.log(`🚨 Node dropped from network grid: ${socket.id}`);
     io.emit('system-message', {
-      text: '🚨 A network peer dropped offline. Media pipelines closed down.'
+      text: '⚠️ Peer disconnected'
     });
   });
 });
 
 // =========================================
-// RUNTIME BOUND PROCESS INITIALIZATION
+// GRACEFUL SHUTDOWN (DEPLOY SAFE)
 // =========================================
-httpServer.listen(PORT, () => {
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received. Shutting down gracefully...');
+  httpServer.close(() => {
+    mongoose.connection.close(false, () => {
+      console.log('Server closed');
+      process.exit(0);
+    });
+  });
+});
+
+// =========================================
+// START SERVER (IMPORTANT FIX: 0.0.0.0)
+// =========================================
+httpServer.listen(PORT, '0.0.0.0', () => {
   console.log('=========================================');
-  console.log(` 🌑 SHADOW WEB MESH ENGINE ONLINE ON PORT ${PORT}`);
+  console.log(` 🌑 SHADOW WEB MESH ENGINE ONLINE`);
+  console.log(` 🚀 PORT: ${PORT}`);
   console.log('=========================================');
 });
 
