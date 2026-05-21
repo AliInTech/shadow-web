@@ -3,8 +3,10 @@ import { io } from 'socket.io-client';
 import { useWebRTC } from '../hooks/useWebRTC';
 import { encryptPayload, decryptPayload } from '../utils/crypto';
 
-const socket = io('import.meta.env.https://shadow-web-backend.onrender.com',{
-    transports:["websocket"]
+const socket = io('https://shadow-web-backend.onrender.com', {
+  transports: ["websocket", "polling"],
+  reconnection: true,
+  timeout: 20000,
 });
 
 function Chat() {
